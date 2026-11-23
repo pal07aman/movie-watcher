@@ -153,16 +153,29 @@ def describe(shows):
 def check_cinema(cinema, start=None, end=None):
     start, end = start or START_DATE, end or END_DATE
     base = cinema["url"].split("?")[0].rstrip("/")
-    first = fetch(base)
-    dates = open_dates(first, base)
+    dates = []
+    for attempt in range(2):
+        dates = open_dates(fetch(base), base)
+        if dates:
+            break
+        if attempt == 0:
+            time.sleep(random.uniform(8, 15))
     if not dates:
-        raise FetchError("couldn't find the date selector (page layout may have changed)")
+        # District sometimes sends the page without its date links. Check the
+        # first wanted date directly instead, using the show listings themselves.
+        url = f"{base}?fromdate={start.isoformat()}"
+        shows = doomsday_shows(fetch(url), start)
+        return ({start: {"url": url, "shows": shows}} if shows else {}), None
     found = {}
     for d in [d for d in dates if start <= d <= end]:
         url = f"{base}?fromdate={d.isoformat()}"
         found[d] = {"url": url, "shows": doomsday_shows(fetch(url), d)}
         time.sleep(random.uniform(1, 3))
     return found, max(dates)
+
+
+def fmt_day(d):
+    return d.strftime("%a %d %b") if d else "unknown, checked directly"
 
 
 def check_city(day):
@@ -228,7 +241,7 @@ def run_test():
         try:
             res, latest = check_cinema(c, probe, probe)
             shows = res.get(probe, {}).get("shows", [])
-            log(f"{c['name']}: latest open date {latest:%a %d %b}\n  20 Dec matches:\n  "
+            log(f"{c['name']}: latest open date {fmt_day(latest)}\n  20 Dec matches:\n  "
                 + (describe(shows).replace("\n", "\n  ") or "(none matching your filters)"))
         except FetchError as e:
             log(f"{c['name']}: {e}")
@@ -277,7 +290,7 @@ def run(minutes=0):
             try:
                 found, latest = check_cinema(c)
                 if not found:
-                    log(f"{c['name']}: not open yet (latest date {latest:%a %d %b})")
+                    log(f"{c['name']}: not open yet (latest date {fmt_day(latest)})")
                 for d, info in found.items():
                     new = [s for s in info["shows"]
                            if f"{c['name']}|{d}|{s['format']}|{s['time']}" not in alerted]
