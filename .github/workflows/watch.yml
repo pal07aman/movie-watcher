@@ -1,0 +1,56 @@
+name: Doomsday watcher
+
+on:
+  schedule:
+    # Every 2 hours. Each run keeps checking for ~5h50m; extra runs wait in the queue,
+    # so a new one takes over the moment the last one finishes (no gaps).
+    - cron: "17 */2 * * *"
+  workflow_dispatch:
+    inputs:
+      mode:
+        description: "test = send a test alert and read 20 Dec; watch = start watching now"
+        type: choice
+        options: [test, watch]
+        default: test
+
+concurrency:
+  group: doomsday-watcher
+  cancel-in-progress: false
+
+jobs:
+  watch:
+    runs-on: ubuntu-latest
+    timeout-minutes: 360
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Restore memory of alerts already sent
+        uses: actions/cache/restore@v4
+        with:
+          path: district_state.json
+          key: alert-state-${{ github.run_id }}
+          restore-keys: alert-state-
+
+      - name: Run watcher
+        env:
+          NTFY_TOPIC: ${{ secrets.NTFY_TOPIC }}
+          TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+          TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
+        run: |
+          [ -f district_state.json ] || echo '{"alerted": []}' > district_state.json
+          if [ -z "$NTFY_TOPIC$TELEGRAM_BOT_TOKEN" ] && [ "${{ inputs.mode }}" != "test" ]; then
+            echo "No NTFY_TOPIC secret set yet, so there's nowhere to send alerts. Skipping this run."
+            exit 0
+          fi
+          if [ "${{ inputs.mode }}" = "test" ]; then
+            python3 district_watch.py --test
+          else
+            python3 district_watch.py --minutes 350
+          fi
+
+      - name: Save memory of alerts sent
+        if: always()
+        uses: actions/cache/save@v4
+        with:
+          path: district_state.json
+          key: alert-state-${{ github.run_id }}
